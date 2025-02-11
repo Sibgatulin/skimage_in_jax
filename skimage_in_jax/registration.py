@@ -1,6 +1,9 @@
+from math import ceil, floor
+
 import jax.numpy as jnp
 from jax.dtypes import result_type
 from jax.numpy.fft import fftfreq, fftn, ifftn
+from jaxtyping import Array, Complex, Float
 
 
 def _upsampled_dft(data, upsampled_region_size, upsample_factor=1, axis_offsets=None):
@@ -247,11 +250,9 @@ def phase_cross_correlation(
     else:
         # Initial shift estimate in upsampled grid
         shift = jnp.round(shift * upsample_factor) / upsample_factor
-        upsampled_region_size = (
-            jnp.ceil(upsample_factor * 1.5).astype(int).item()
-        )  # DIFF
+        upsampled_region_size = ceil(upsample_factor * 1.5)  # DIFF
         # Center of output array at dftshift + 1
-        dftshift = jnp.floor(upsampled_region_size / 2.0)
+        dftshift = floor(upsampled_region_size / 2.0)
         # Matrix multiply DFT around the current shift estimate
         sample_region_offset = dftshift - shift * upsample_factor
         cross_correlation = _upsampled_dft(
@@ -273,22 +274,25 @@ def phase_cross_correlation(
         src_amp = jnp.sum(jnp.real(src_freq * src_freq.conj()))
         target_amp = jnp.sum(jnp.real(target_freq * target_freq.conj()))
 
-    for dim in range(src_freq.ndim):
-        if shape[dim] == 1:
-            shift = shift.at[dim].set(0)
+    shift = jnp.where(shape == 1, 0, shift)
 
     if disambiguate:
         raise NotImplementedError("disambiguation is not yet supported")
 
-    if jnp.isnan(CCmax) or jnp.isnan(src_amp) or jnp.isnan(target_amp):
-        raise ValueError("NaN values found, please remove NaNs from your input data.")
+    # cannot check for NaNs if I want to jit. Handle them differently
+    # if jnp.isnan(CCmax) or jnp.isnan(src_amp) or jnp.isnan(target_amp):
+    #     raise ValueError("NaN values found, please remove NaNs from your input data.")
 
     error = _compute_error(CCmax, src_amp, target_amp)
     phasediff = _compute_phasediff(CCmax)
     return shift, error, phasediff
 
 
-def _compute_error(cross_correlation_max, src_amp, target_amp):
+def _compute_error(
+    cross_correlation_max: Complex[Array, ""],
+    src_amp: Float[Array, ""],
+    target_amp: Float[Array, ""],
+) -> Float[Array, ""]:
     """
     Compute RMS error metric between ``src_image`` and ``target_image``.
 
@@ -302,20 +306,17 @@ def _compute_error(cross_correlation_max, src_amp, target_amp):
         The normalized average image intensity of the target image
     """
     amp = src_amp * target_amp
-    if amp == 0:
-        warnings.warn(
-            "Could not determine RMS error between images with the normalized "
-            f"average intensities {src_amp!r} and {target_amp!r}. Either the "
-            "reference or moving image may be empty.",
-            UserWarning,
-            stacklevel=3,
-        )
+    # TODO: the following is not compatible with jit
+    # if amp == 0:
+    #     warnings.warn(
+    #         "Could not determine RMS error between images with the normalized "
+    #         f"average intensities {src_amp!r} and {target_amp!r}. Either the "
+    #         "reference or moving image may be empty.",
+    #         UserWarning,
+    #         stacklevel=3,
+    #     )
     error = 1.0 - cross_correlation_max * cross_correlation_max.conj() / amp
     return jnp.sqrt(jnp.abs(error))
-
-
-def _compute_phasediff_jax(CCmax):
-    return jnp.angle(CCmax)
 
 
 def _compute_phasediff(cross_correlation_max):
