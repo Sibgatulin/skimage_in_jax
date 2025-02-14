@@ -206,7 +206,10 @@ def phase_cross_correlation(
 
     # Ensure images have the same shape
     if reference_image.shape != moving_image.shape:
-        raise ValueError("images must be same shape")
+        raise ValueError(
+            "images must be same shape, got "
+            f"{reference_image.shape=} != {moving_image.shape=}"
+        )
 
     # assume complex data is already in Fourier space
     if space.lower() == "fourier":
